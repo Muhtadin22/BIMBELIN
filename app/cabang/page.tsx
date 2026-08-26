@@ -1,12 +1,12 @@
 "use client";
-import { motion } from 'framer-motion';
+import { motion, Variants } from 'framer-motion'; // <-- PERBAIKAN: Menambahkan Variants di sini
 import { Button } from '@/components/ui/Button';
-import { 
-  Target, 
-  CheckCircle2, 
-  ArrowRight, 
-  GraduationCap, 
-  Rocket, 
+import {
+  Target,
+  CheckCircle2,
+  ArrowRight,
+  GraduationCap,
+  Rocket,
   BookOpen,
   Sparkles
 } from 'lucide-react';
@@ -69,8 +69,8 @@ export default function JenjangPage() {
     }
   ];
 
-  // Variasi Animasi untuk Container List
-  const listContainer = {
+  // <-- PERBAIKAN: Menambahkan tipe : Variants
+  const listContainer: Variants = {
     hidden: { opacity: 0 },
     show: {
       opacity: 1,
@@ -78,38 +78,38 @@ export default function JenjangPage() {
     }
   };
 
-  // Variasi Animasi untuk Item List
-  const listItem = {
+  // <-- PERBAIKAN: Menambahkan tipe : Variants
+  const listItem: Variants = {
     hidden: { opacity: 0, x: -20 },
     show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 300 } }
   };
 
   return (
     <div className="pt-24 pb-24 bg-gray-50 min-h-screen relative overflow-hidden">
-      
+
       {/* Background Ornaments (Modern Touch) */}
       <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-blue-100/50 to-transparent pointer-events-none"></div>
       <div className="absolute top-20 right-10 w-72 h-72 bg-energeticOrange-300 rounded-full mix-blend-multiply filter blur-[120px] opacity-30 animate-pulse pointer-events-none"></div>
-      
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        
+
         {/* Header Section */}
         <div className="text-center mb-20">
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.8 }} 
-            animate={{ opacity: 1, scale: 1 }} 
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white border border-blue-100 text-trustBlue-700 font-bold mb-6 shadow-sm"
           >
-            <Sparkles className="w-5 h-5 text-energeticOrange-500" /> 
+            <Sparkles className="w-5 h-5 text-energeticOrange-500" />
             Kurikulum Terstruktur
           </motion.div>
-          <motion.h1 
+          <motion.h1
             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
             className="text-5xl md:text-6xl font-black text-trustBlue-900 mb-6 tracking-tight"
           >
             Fokus Pada <span className="text-transparent bg-clip-text bg-gradient-to-r from-energeticOrange-500 to-orange-400">Target Belajarmu</span>
           </motion.h1>
-          <motion.p 
+          <motion.p
             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
             className="text-xl text-gray-600 max-w-2xl mx-auto"
           >
@@ -120,16 +120,16 @@ export default function JenjangPage() {
         {/* Pricing/Level Cards */}
         <div className="grid lg:grid-cols-3 gap-8 items-stretch">
           {jenjangData.map((data, i) => (
-            <motion.div 
+            <motion.div
               key={data.id}
-              initial={{ opacity: 0, y: 30 }} 
-              animate={{ opacity: 1, y: 0 }} 
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.15, duration: 0.5 }}
               whileHover={{ y: -12 }}
               className={`rounded-[2.5rem] border-2 p-1 relative group flex flex-col transition-all duration-300 ${data.borderColor} ${data.glowColor}`}
             >
               <div className={`h-full rounded-[2.2rem] p-8 md:p-10 flex flex-col ${data.color}`}>
-                
+
                 {/* Card Header */}
                 <div className="flex justify-between items-start mb-8 border-b border-white/10 pb-8">
                   <div>
@@ -143,12 +143,12 @@ export default function JenjangPage() {
 
                 {/* Target Badge */}
                 <div className={`inline-flex items-center gap-2 px-4 py-3 rounded-xl w-max mb-8 font-bold text-sm shadow-inner ${data.id === 'sma' ? 'bg-trustBlue-800/50 text-white' : 'bg-white/50 text-trustBlue-900'}`}>
-                  <Target className={`w-5 h-5 ${data.id === 'sma' ? 'text-energeticOrange-400' : 'text-energeticOrange-500'}`} /> 
+                  <Target className={`w-5 h-5 ${data.id === 'sma' ? 'text-energeticOrange-400' : 'text-energeticOrange-500'}`} />
                   Target: {data.target}
                 </div>
 
                 {/* Features List with Staggered Animation */}
-                <motion.div 
+                <motion.div
                   className="flex-1 mb-10"
                   variants={listContainer}
                   initial="hidden"
@@ -169,10 +169,10 @@ export default function JenjangPage() {
                 </motion.div>
 
                 {/* Interactive CTA Button */}
-                <Button 
+                <Button
                   className={`w-full h-16 text-lg flex justify-between items-center px-8 transition-all group/btn ${data.btnColor}`}
                 >
-                  Pilih Program Ini 
+                  Pilih Program Ini
                   <ArrowRight className="w-6 h-6 group-hover/btn:translate-x-2 transition-transform duration-300" />
                 </Button>
 
