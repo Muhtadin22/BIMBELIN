@@ -7,6 +7,7 @@ import {
   ShieldAlert, CheckSquare, Maximize, XCircle, 
   ChevronLeft, ChevronRight, CheckCircle2, Lock, Flag, Info
 } from 'lucide-react';
+import { supabase } from '@/utils/supabase';
 
 interface Soal {
   id: string;
@@ -16,7 +17,6 @@ interface Soal {
 }
 
 export default function CBTSystemPage() {
-  // --- STATE KEAMANAN & SISTEM ---
   const [isExamStarted, setIsExamStarted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cheatWarnings, setCheatWarnings] = useState(0);
@@ -25,8 +25,9 @@ export default function CBTSystemPage() {
   const MAX_WARNINGS = 3;
 
   const [tokenInput, setTokenInput] = useState('');
+  const [isLoadingToken, setIsLoadingToken] = useState(false);
 
-  // --- STATE POP-UP MODAL KUSTOM ---
+  // Pop-up Modal Kustom
   const [popup, setPopup] = useState<{
     isOpen: boolean;
     title: string;
@@ -43,9 +44,9 @@ export default function CBTSystemPage() {
     setPopup({ isOpen: true, title, message, type: 'confirm', onConfirm });
   };
 
-  // --- STATE DATA UJIAN ---
+  // State Ujian
   const [questions, setQuestions] = useState<Soal[]>([]);
-  const [pengaturan, setPengaturan] = useState({ judul: 'Ujian CBT Bimbel SG', durasi: '120' });
+  const [pengaturan, setPengaturan] = useState({ judul: 'Ujian CBT Bimbel SG', durasi: 120 });
   const [currentIndex, setCurrentIndex] = useState(0);
   
   const [answers, setAnswers] = useState<Record<string, number>>({});
@@ -55,50 +56,31 @@ export default function CBTSystemPage() {
   const [isFinished, setIsFinished] = useState(false);
   const [score, setScore] = useState(0);
 
-  // --- INISIALISASI DATA ---
+  // Auto-save draft
   useEffect(() => {
-    const savedSoal = localStorage.getItem('cbt_soal');
-    const savedPengaturan = localStorage.getItem('cbt_pengaturan');
     const draftAnswers = localStorage.getItem('cbt_draft_answers');
     const draftRagu = localStorage.getItem('cbt_draft_ragu');
-    
-    if (savedSoal) setQuestions(JSON.parse(savedSoal));
-    else {
-      setQuestions([{ id: '1', pertanyaan: 'Data ujian belum tersedia.', opsi: ['A', 'B', 'C', 'D', 'E'], jawabanBenar: 0 }]);
-    }
-    
-    if (savedPengaturan) {
-      const parsedConfig = JSON.parse(savedPengaturan);
-      setPengaturan(parsedConfig);
-      setTimeLeft(parseInt(parsedConfig.durasi) * 60);
-    }
-
     if (draftAnswers) setAnswers(JSON.parse(draftAnswers));
     if (draftRagu) setRaguRagu(JSON.parse(draftRagu));
   }, []);
 
-  // --- AUTO-SAVE ---
   useEffect(() => {
-    if (Object.keys(answers).length > 0) {
-      localStorage.setItem('cbt_draft_answers', JSON.stringify(answers));
-    }
-    if (Object.keys(raguRagu).length > 0) {
-      localStorage.setItem('cbt_draft_ragu', JSON.stringify(raguRagu));
-    }
+    if (Object.keys(answers).length > 0) localStorage.setItem('cbt_draft_answers', JSON.stringify(answers));
+    if (Object.keys(raguRagu).length > 0) localStorage.setItem('cbt_draft_ragu', JSON.stringify(raguRagu));
   }, [answers, raguRagu]);
 
-  // --- TIMER ---
+  // Timer & Auto-Submit
   const handleAutoSubmit = useCallback(() => {
     let correctCount = 0;
     questions.forEach(q => { if (answers[q.id] === q.jawabanBenar) correctCount++; });
-    setScore(Math.round((correctCount / questions.length) * 100));
+    const finalScore = questions.length > 0 ? Math.round((correctCount / questions.length) * 100) : 0;
+    setScore(finalScore);
     setIsFinished(true);
     if (document.fullscreenElement) document.exitFullscreen();
   }, [answers, questions]);
 
   useEffect(() => {
     if (!isExamStarted || isFinished || isDisqualified) return;
-    
     const timerInterval = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
@@ -109,7 +91,6 @@ export default function CBTSystemPage() {
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(timerInterval);
   }, [isExamStarted, isFinished, isDisqualified, handleAutoSubmit]);
 
@@ -119,20 +100,61 @@ export default function CBTSystemPage() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // --- FUNGSI UTAMA UJIAN ---
+  // Validasi Token & Ambil Data dari Supabase
   const startExam = async () => {
-    if (tokenInput.trim() === '') { 
-      showAlert("Token Kosong", "Silakan masukkan Token Ujian terlebih dahulu!"); 
-      return; 
+    if (tokenInput.trim() === '') {
+      showAlert("Token Kosong", "Silakan masukkan Token Ujian terlebih dahulu!");
+      return;
     }
+
+    setIsLoadingToken(true);
     try {
+      // 1. Ambil data ujian berdasarkan token dari Supabase
+      const { data: ujianData, error: ujianError } = await supabase
+        .from('ujian')
+        .select('*')
+        .eq('token', tokenInput.trim())
+        .single();
+
+      if (ujianError || !ujianData) {
+        showAlert("Token Tidak Valid", "Token ujian tidak ditemukan atau salah.");
+        setIsLoadingToken(false);
+        return;
+      }
+
+      // 2. Ambil bank soal berdasarkan ujian_id
+      const { data: soalData, error: soalError } = await supabase
+        .from('bank_soal')
+        .select('*')
+        .eq('ujian_id', ujianData.id);
+
+      if (soalError || !soalData || soalData.length === 0) {
+        showAlert("Soal Kosong", "Belum ada daftar soal untuk ujian ini.");
+        setIsLoadingToken(false);
+        return;
+      }
+
+      const formattedSoal: Soal[] = soalData.map((s: any) => ({
+        id: s.id.toString(),
+        pertanyaan: s.pertanyaan,
+        opsi: s.opsi,
+        jawabanBenar: s.jawaban_benar
+      }));
+
+      setQuestions(formattedSoal);
+      setPengaturan({ judul: ujianData.judul, durasi: ujianData.durasi });
+      setTimeLeft(ujianData.durasi * 60);
+
       if (document.documentElement.requestFullscreen) {
         await document.documentElement.requestFullscreen();
         setIsFullscreen(true);
         setIsExamStarted(true);
       }
     } catch (err) {
-      showAlert("Kesalahan Tampilan", "Browser Anda tidak mendukung Layar Penuh.");
+      console.error(err);
+      showAlert("Kesalahan Sistem", "Gagal menghubungkan ke database server.");
+    } finally {
+      setIsLoadingToken(false);
     }
   };
 
@@ -151,12 +173,12 @@ export default function CBTSystemPage() {
   const handleManualFinish = () => {
     showConfirm(
       "Konfirmasi Selesai",
-      "Apakah Anda yakin ingin menyelesaikan ujian sekarang? Sisa waktu Anda masih ada.",
+      "Apakah Anda yakin ingin menyelesaikan ujian sekarang?",
       () => handleAutoSubmit()
     );
   };
 
-  // --- ENGINE ANTI-CHEAT ---
+  // Anti-Cheat System
   useEffect(() => {
     if (!isExamStarted || isDisqualified || isFinished) return;
     const triggerWarning = () => {
@@ -193,50 +215,111 @@ export default function CBTSystemPage() {
     };
   }, [isExamStarted, isDisqualified, isFinished]);
 
+  // Tampilan Diskualifikasi
+  if (isDisqualified) {
+    return (
+      <div className="min-h-screen bg-red-50 flex items-center justify-center p-4 select-none absolute inset-0 z-40">
+        <div className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-lg border-2 border-red-500">
+          <XCircle className="w-24 h-24 text-red-500 mx-auto mb-6" />
+          <h1 className="text-3xl font-black text-red-600 mb-4">UJIAN DIHENTIKAN!</h1>
+          <p className="text-gray-700 mb-6">Anda melanggar tata tertib ujian (keluar layar / pindah tab) sebanyak 3 kali.</p>
+          <Button variant="outline" className="w-full border-red-500 text-red-600 hover:bg-red-50" onClick={() => window.location.href = '/'}>Kembali</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tampilan Hasil Ujian
+  if (isFinished) {
+    return (
+      <div className="min-h-screen bg-trustBlue-50 flex items-center justify-center p-4 select-none absolute inset-0 z-40">
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-lg w-full border border-gray-100">
+          <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto mb-4" />
+          <h1 className="text-3xl font-bold text-trustBlue-900 mb-2">Ujian Selesai!</h1>
+          <p className="text-gray-600 mb-8">{pengaturan.judul}</p>
+          
+          <div className="bg-trustBlue-50 rounded-2xl p-6 mb-8 border border-trustBlue-100">
+            <p className="text-sm font-bold text-trustBlue-600 mb-1">Skor Akhir Anda:</p>
+            <h2 className="text-6xl font-black text-trustBlue-900">{score}</h2>
+          </div>
+          
+          <Button className="w-full h-14 text-lg" onClick={() => {
+            localStorage.removeItem('cbt_draft_answers');
+            localStorage.removeItem('cbt_draft_ragu');
+            window.location.href = '/';
+          }}>Kembali ke Beranda</Button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Lobby Token
+  if (!isExamStarted) {
+    return (
+      <div className="min-h-screen bg-trustBlue-900 flex items-center justify-center p-4 absolute inset-0 z-30 font-sans">
+        
+        {/* Pop-up Modal */}
+        <AnimatePresence>
+          {popup.isOpen && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl text-center">
+                <Info className="w-10 h-10 text-energeticOrange-500 mx-auto mb-3" />
+                <h3 className="text-2xl font-black text-trustBlue-900 mb-2">{popup.title}</h3>
+                <p className="text-gray-600 mb-6">{popup.message}</p>
+                <Button onClick={() => setPopup(prev => ({ ...prev, isOpen: false }))} className="w-full">Mengerti</Button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-10 rounded-3xl shadow-2xl max-w-xl w-full text-center">
+          <ShieldAlert className="w-16 h-16 text-energeticOrange-500 mx-auto mb-4" />
+          <h1 className="text-3xl font-black text-trustBlue-900 mb-2">Portal Ujian SG</h1>
+          <p className="text-gray-500 mb-8">Masukkan Token Terbit dari Guru</p>
+
+          <div className="bg-gray-50 p-6 rounded-2xl mb-8 border border-gray-200">
+            <label className="block font-bold text-gray-700 mb-4 flex items-center justify-center gap-2">
+              <Lock className="w-4 h-4" /> Token Ujian Supabase
+            </label>
+            <input 
+              type="text" 
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value.toUpperCase())}
+              className="w-full p-4 rounded-xl border border-gray-300 text-center font-mono text-3xl font-bold tracking-[0.3em] uppercase focus:ring-2 focus:ring-energeticOrange-500 outline-none"
+              placeholder="SGXXXX"
+              maxLength={6}
+            />
+          </div>
+
+          <Button onClick={startExam} disabled={isLoadingToken} className="w-full h-14 text-lg bg-trustBlue-900 hover:bg-trustBlue-800 text-white">
+            {isLoadingToken ? 'Memvalidasi Cloud...' : 'Mulai Ujian & Masuk Layar Penuh'}
+          </Button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  const activeQuestion = questions[currentIndex];
 
   return (
     <div className="min-h-screen bg-gray-100 select-none relative font-sans">
       
-      {/* --- KOMPONEN POP-UP MODAL KUSTOM (SISWA) --- */}
+      {/* Pop-up Modal Ujian */}
       <AnimatePresence>
         {popup.isOpen && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }} 
-              animate={{ opacity: 1, scale: 1 }} 
-              exit={{ opacity: 0, scale: 0.9 }} 
-              className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl text-center border border-gray-100"
-            >
-              <div className="w-16 h-16 bg-trustBlue-50 text-trustBlue-900 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Info className="w-8 h-8 text-energeticOrange-500" />
-              </div>
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl text-center">
+              <Info className="w-10 h-10 text-energeticOrange-500 mx-auto mb-3" />
               <h3 className="text-2xl font-black text-trustBlue-900 mb-2">{popup.title}</h3>
-              <p className="text-gray-600 mb-8 leading-relaxed">{popup.message}</p>
-
-              <div className="flex gap-3 justify-center">
+              <p className="text-gray-600 mb-6">{popup.message}</p>
+              <div className="flex gap-2">
                 {popup.type === 'confirm' ? (
                   <>
-                    <Button 
-                      variant="outline" 
-                      onClick={() => setPopup(prev => ({ ...prev, isOpen: false }))} 
-                      className="flex-1"
-                    >
-                      Batal
-                    </Button>
-                    <Button 
-                      onClick={() => { popup.onConfirm?.(); setPopup(prev => ({ ...prev, isOpen: false })); }} 
-                      className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-                    >
-                      Ya, Lanjutkan
-                    </Button>
+                    <Button variant="outline" onClick={() => setPopup(prev => ({ ...prev, isOpen: false }))} className="flex-1">Batal</Button>
+                    <Button onClick={() => { popup.onConfirm?.(); setPopup(prev => ({ ...prev, isOpen: false })); }} className="flex-1 bg-red-600 text-white">Ya</Button>
                   </>
                 ) : (
-                  <Button 
-                    onClick={() => setPopup(prev => ({ ...prev, isOpen: false }))} 
-                    className="w-full bg-trustBlue-900 hover:bg-trustBlue-800 text-white"
-                  >
-                    Mengerti
-                  </Button>
+                  <Button onClick={() => setPopup(prev => ({ ...prev, isOpen: false }))} className="w-full">Mengerti</Button>
                 )}
               </div>
             </motion.div>
@@ -244,77 +327,14 @@ export default function CBTSystemPage() {
         )}
       </AnimatePresence>
 
-      {/* 1. DISKUALIFIKASI */}
-      {isDisqualified && (
-        <div className="min-h-screen bg-red-50 flex items-center justify-center p-4 select-none absolute inset-0 z-40">
-          <div className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-lg border-2 border-red-500">
-            <XCircle className="w-24 h-24 text-red-500 mx-auto mb-6" />
-            <h1 className="text-3xl font-black text-red-600 mb-4">UJIAN DIHENTIKAN!</h1>
-            <p className="text-gray-700 mb-6">Anda terdeteksi melakukan pelanggaran (keluar layar / pindah tab) sebanyak 3 kali.</p>
-            <Button variant="outline" className="w-full border-red-500 text-red-600 hover:bg-red-50" onClick={() => window.location.href = '/'}>Kembali</Button>
-          </div>
-        </div>
-      )}
-
-      {/* 2. HASIL UJIAN */}
-      {isFinished && (
-        <div className="min-h-screen bg-trustBlue-50 flex items-center justify-center p-4 select-none absolute inset-0 z-40">
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-lg w-full border border-gray-100">
-            <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto mb-4" />
-            <h1 className="text-3xl font-bold text-trustBlue-900 mb-2">Ujian Selesai!</h1>
-            <p className="text-gray-600 mb-8">{pengaturan.judul}</p>
-            
-            <div className="bg-trustBlue-50 rounded-2xl p-6 mb-8 border border-trustBlue-100">
-              <p className="text-sm font-bold text-trustBlue-600 mb-1">Skor Akhir Anda:</p>
-              <h2 className="text-6xl font-black text-trustBlue-900">{score}</h2>
-            </div>
-            
-            <Button className="w-full h-14 text-lg" onClick={() => {
-              localStorage.removeItem('cbt_draft_answers');
-              localStorage.removeItem('cbt_draft_ragu');
-              window.location.href = '/';
-            }}>Kembali ke Beranda</Button>
-          </motion.div>
-        </div>
-      )}
-
-      {/* 3. LOBBY INPUT TOKEN */}
-      {!isExamStarted && (
-        <div className="min-h-screen bg-trustBlue-900 flex items-center justify-center p-4 absolute inset-0 z-30">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-10 rounded-3xl shadow-2xl max-w-xl w-full text-center">
-            <ShieldAlert className="w-16 h-16 text-energeticOrange-500 mx-auto mb-4" />
-            <h1 className="text-3xl font-black text-trustBlue-900 mb-2">Portal Ujian SG</h1>
-            <p className="text-gray-500 mb-8">Token Wajib untuk Akses Ujian</p>
-
-            <div className="bg-gray-50 p-6 rounded-2xl mb-8 border border-gray-200">
-              <label className="block font-bold text-gray-700 mb-4 flex items-center justify-center gap-2">
-                <Lock className="w-4 h-4" /> Masukkan Token Ujian
-              </label>
-              <input 
-                type="text" 
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value.toUpperCase())}
-                className="w-full p-4 rounded-xl border border-gray-300 text-center font-mono text-3xl font-bold tracking-[0.3em] uppercase focus:ring-2 focus:ring-energeticOrange-500 outline-none"
-                placeholder="XXXXXX"
-                maxLength={6}
-              />
-            </div>
-
-            <Button onClick={startExam} className="w-full h-14 text-lg bg-trustBlue-900 hover:bg-trustBlue-800 text-white">
-              Mulai Ujian & Masuk Layar Penuh
-            </Button>
-          </motion.div>
-        </div>
-      )}
-
-      {/* Peringatan Anti-Cheat Overlay */}
+      {/* Warning Overlay */}
       <AnimatePresence>
         {showWarningOverlay && (
           <div className="fixed inset-0 z-50 bg-red-600/95 backdrop-blur-md flex items-center justify-center p-4">
             <div className="bg-white p-10 rounded-3xl text-center max-w-lg shadow-2xl">
               <AlertTriangle className="w-24 h-24 text-red-500 mx-auto mb-6 animate-pulse" />
               <h2 className="text-3xl font-black text-red-600 mb-2">PERINGATAN {cheatWarnings}/{MAX_WARNINGS}!</h2>
-              <p className="text-gray-700 mb-8 font-medium">Sistem mendeteksi perpindahan aplikasi/tab. Harap kembali fokus ke ujian.</p>
+              <p className="text-gray-700 mb-8 font-medium">Sistem mendeteksi Anda keluar dari layar ujian.</p>
               <Button className="bg-red-600 hover:bg-red-700 text-white w-full h-14 font-bold" onClick={async () => { 
                 setShowWarningOverlay(false); 
                 if (!document.fullscreenElement) { try { await document.documentElement.requestFullscreen(); } catch (e) {} } 
@@ -324,71 +344,46 @@ export default function CBTSystemPage() {
         )}
       </AnimatePresence>
 
-      {/* HEADER BAR */}
-      <header className="bg-white shadow-sm border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+      <header className="bg-white shadow-sm border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10">
         <div className="font-bold text-xl text-trustBlue-900 hidden sm:block">{pengaturan.judul}</div>
-        <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold border transition-colors ${timeLeft < 300 ? 'bg-red-100 text-red-600 border-red-200 animate-pulse' : 'bg-trustBlue-50 text-trustBlue-700 border-trustBlue-100'}`}>
-            <Timer className="w-5 h-5" /> Sisa Waktu: {formatTime(timeLeft)}
+        <div className="flex items-center gap-4">
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold border ${timeLeft < 300 ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-trustBlue-50 text-trustBlue-700'}`}>
+            <Timer className="w-5 h-5" /> {formatTime(timeLeft)}
           </div>
-          <Button variant="outline" onClick={handleManualFinish} className="border-red-500 text-red-500 hover:bg-red-50 font-bold hidden md:flex">
-            Selesaikan
-          </Button>
+          <Button variant="outline" onClick={handleManualFinish} className="border-red-500 text-red-500 hover:bg-red-50 font-bold">Selesaikan</Button>
         </div>
       </header>
 
-      {/* WORKSPACE */}
       <div className="max-w-[1400px] mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
-        
-        {/* KIRI: SOAL */}
-        <div className="lg:col-span-3 bg-white p-6 md:p-10 rounded-2xl shadow-sm border border-gray-200 flex flex-col min-h-[75vh]">
-          <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
+        <div className="lg:col-span-3 bg-white p-6 md:p-10 rounded-2xl shadow-sm border flex flex-col min-h-[75vh]">
+          <div className="flex justify-between items-center mb-6 pb-4 border-b">
             <h2 className="text-2xl font-black text-gray-800">Soal No. {currentIndex + 1}</h2>
-            <label className="flex items-center gap-2 cursor-pointer bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-full border border-yellow-200 transition-colors">
-              <input 
-                type="checkbox" 
-                className="w-4 h-4 text-yellow-500 focus:ring-yellow-500 rounded" 
-                checked={!!raguRagu[questions[currentIndex]?.id]}
-                onChange={() => toggleRagu(questions[currentIndex]?.id)}
-              />
+            <label className="flex items-center gap-2 cursor-pointer bg-yellow-50 hover:bg-yellow-100 px-4 py-2 rounded-full border border-yellow-200">
+              <input type="checkbox" className="w-4 h-4 text-yellow-500 rounded" checked={!!raguRagu[activeQuestion?.id]} onChange={() => toggleRagu(activeQuestion?.id)} />
               <span className="font-bold text-yellow-700 flex items-center gap-1"><Flag className="w-4 h-4"/> Ragu-ragu</span>
             </label>
           </div>
           
           <div className="text-lg text-gray-800 mb-10 font-medium whitespace-pre-wrap leading-relaxed">
-            {questions[currentIndex]?.pertanyaan}
+            {activeQuestion?.pertanyaan}
           </div>
 
           <div className="space-y-4 overflow-y-auto pr-2 flex-1 mb-8">
-            {questions[currentIndex]?.opsi.map((opsi, idx) => (
-              <label 
-                key={idx} 
-                className={`flex items-center gap-4 p-5 rounded-xl border-2 cursor-pointer transition-all ${answers[questions[currentIndex].id] === idx ? 'border-trustBlue-500 bg-trustBlue-50 shadow-sm' : 'border-gray-100 hover:border-trustBlue-200 hover:bg-gray-50'}`}
-              >
-                <input 
-                  type="radio" 
-                  name={`soal-${questions[currentIndex].id}`} 
-                  className="w-5 h-5 text-trustBlue-600 focus:ring-trustBlue-500" 
-                  checked={answers[questions[currentIndex].id] === idx}
-                  onChange={() => selectAnswer(questions[currentIndex].id, idx)}
-                />
-                <span className={`font-bold ${answers[questions[currentIndex].id] === idx ? 'text-trustBlue-700' : 'text-gray-400'}`}>{String.fromCharCode(65 + idx)}.</span>
+            {activeQuestion?.opsi.map((opsi, idx) => (
+              <label key={idx} className={`flex items-center gap-4 p-5 rounded-xl border-2 cursor-pointer transition-all ${answers[activeQuestion.id] === idx ? 'border-trustBlue-500 bg-trustBlue-50' : 'border-gray-100 hover:bg-gray-50'}`}>
+                <input type="radio" name={`soal-${activeQuestion.id}`} className="w-5 h-5 text-trustBlue-600" checked={answers[activeQuestion.id] === idx} onChange={() => selectAnswer(activeQuestion.id, idx)} />
+                <span className="font-bold text-gray-400">{String.fromCharCode(65 + idx)}.</span>
                 <span className="text-lg text-gray-700">{opsi}</span>
               </label>
             ))}
           </div>
 
-          <div className="flex justify-between mt-auto pt-6 border-t border-gray-100">
-            <Button variant="outline" onClick={handlePrev} disabled={currentIndex === 0} className="px-6 h-12 flex items-center gap-2 font-bold text-gray-600">
-              <ChevronLeft className="w-5 h-5"/> Sebelumnya
-            </Button>
-            <Button onClick={handleNext} disabled={currentIndex === questions.length - 1} className="px-8 h-12 bg-trustBlue-900 text-white hover:bg-trustBlue-800 flex items-center gap-2 font-bold">
-              Selanjutnya <ChevronRight className="w-5 h-5"/>
-            </Button>
+          <div className="flex justify-between mt-auto pt-6 border-t">
+            <Button variant="outline" onClick={handlePrev} disabled={currentIndex === 0} className="px-6 h-12"><ChevronLeft className="w-5 h-5 mr-1"/> Sebelumnya</Button>
+            <Button onClick={handleNext} disabled={currentIndex === questions.length - 1} className="px-8 h-12 bg-trustBlue-900 text-white">Selanjutnya <ChevronRight className="w-5 h-5 ml-1"/></Button>
           </div>
         </div>
 
-        {/* KANAN: NAVIGASI */}
         <div className="space-y-6">
           <div className="bg-gray-900 rounded-2xl aspect-video relative flex items-center justify-center shadow-lg border-4 border-gray-800">
             <Camera className="w-10 h-10 text-gray-600 absolute" />
@@ -396,45 +391,25 @@ export default function CBTSystemPage() {
               <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
               <span className="text-xs font-bold text-white tracking-widest">REC</span>
             </div>
-            <span className="absolute bottom-3 text-xs text-gray-500">Proctoring Aktif</span>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <CheckSquare className="w-5 h-5 text-trustBlue-600" /> Navigasi Soal
-            </h3>
-            
-            <div className="grid grid-cols-5 gap-2 max-h-[30vh] overflow-y-auto pr-1">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border">
+            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><CheckSquare className="w-5 h-5 text-trustBlue-600" /> Navigasi Soal</h3>
+            <div className="grid grid-cols-5 gap-2 max-h-[30vh] overflow-y-auto">
               {questions.map((q, idx) => {
-                let btnColor = 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-200';
-                if (idx === currentIndex) btnColor = 'bg-trustBlue-900 text-white shadow-md transform scale-110';
-                else if (raguRagu[q.id]) btnColor = 'bg-yellow-400 text-yellow-900 border border-yellow-500 hover:bg-yellow-500';
-                else if (answers[q.id] !== undefined) btnColor = 'bg-green-100 text-green-700 border border-green-200 hover:bg-green-200';
-                
+                let btnColor = 'bg-gray-50 text-gray-500 border';
+                if (idx === currentIndex) btnColor = 'bg-trustBlue-900 text-white';
+                else if (raguRagu[q.id]) btnColor = 'bg-yellow-400 text-yellow-900';
+                else if (answers[q.id] !== undefined) btnColor = 'bg-green-100 text-green-700 border-green-200';
                 return (
-                  <button 
-                    key={q.id}
-                    onClick={() => setCurrentIndex(idx)}
-                    className={`w-full aspect-square rounded-lg font-bold text-sm transition-all ${btnColor}`}
-                  >
+                  <button key={q.id} onClick={() => setCurrentIndex(idx)} className={`w-full aspect-square rounded-lg font-bold text-sm ${btnColor}`}>
                     {idx + 1}
                   </button>
                 );
               })}
             </div>
-
-            <div className="mt-6 flex flex-col gap-3 text-xs font-medium text-gray-600 border-t border-gray-100 pt-4">
-              <div className="flex items-center gap-3"><div className="w-4 h-4 bg-green-100 border border-green-200 rounded-sm"></div> Terjawab</div>
-              <div className="flex items-center gap-3"><div className="w-4 h-4 bg-yellow-400 border border-yellow-500 rounded-sm"></div> Ragu-ragu</div>
-              <div className="flex items-center gap-3"><div className="w-4 h-4 bg-gray-50 border border-gray-200 rounded-sm"></div> Kosong</div>
-            </div>
           </div>
-          
-          <Button variant="outline" onClick={handleManualFinish} className="w-full border-red-500 text-red-500 hover:bg-red-50 font-bold md:hidden">
-            Selesaikan Ujian
-          </Button>
         </div>
-
       </div>
     </div>
   );
